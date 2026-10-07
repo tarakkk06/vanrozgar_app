@@ -1,0 +1,79 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && profile().role == 'admin';
+    }
+
+    function isCommittee() {
+      return signedIn() && profile().role in ['committee', 'admin'];
+    }
+
+    function mayAccessVillage(villageId) {
+      let user = profile();
+      let village = get(/databases/$(database)/documents/villages/$(villageId)).data;
+      return signedIn()
+          && (user.role == 'admin'
+              || villageId in user.allowedVillageIds
+              || village.district in user.allowedDistricts);
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /villages/{villageId} {
+      allow read: if signedIn() && mayAccessVillage(villageId);
+      allow write: if false;
+
+      match /resources/{resourceId} {
+        allow read: if mayAccessVillage(villageId);
+        allow create, update: if isCommittee()
+            && mayAccessVillage(villageId)
+            && request.resource.data.keys().hasOnly([
+              'availabilityA',
+              'conditionC',
+              'seasonalityS',
+              'reachR',
+              'reason',
+              'verifiedBy',
+              'verificationNote',
+              'status',
+              'updatedAt'
+            ])
+            && request.resource.data.availabilityA is number
+            && request.resource.data.availabilityA >= 0
+            && request.resource.data.availabilityA <= 1
+            && request.resource.data.conditionC is number
+            && request.resource.data.conditionC >= 0
+            && request.resource.data.conditionC <= 1
+            && request.resource.data.seasonalityS is number
+            && request.resource.data.seasonalityS >= 0
+            && request.resource.data.seasonalityS <= 1
+            && request.resource.data.reachR is number
+            && request.resource.data.reachR >= 0
+            && request.resource.data.reachR <= 1
+            && request.resource.data.reason is string
+            && request.resource.data.verifiedBy is string
+            && request.resource.data.verificationNote is string
+            && request.resource.data.status in [
+              'toBeVerified',
+              'confirmed',
+              'changed',
+              'rejected'
+            ];
+        allow delete: if false;
+      }
+    }
+  }
+}
